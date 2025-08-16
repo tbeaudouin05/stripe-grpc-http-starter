@@ -1,0 +1,51 @@
+# fly.toml app configuration file generated for ai-mails-backend on 2025-08-12T21:05:09+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'ai-mails-backend'
+primary_region = 'cdg'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[deploy]
+  release_command = "/app/bin/testrunner -short -pkg-parallel 8 -integration-run ^TestLoadConfig_Environment_Integration$ -integration-path api/config"
+
+  [deploy.release_command_vm]
+    memory = '2gb'
+    cpu_kind = 'shared'
+    cpus = 8
+
+[env]
+  GRPC_PORT = '50051'
+  PORT = '8080'
+
+[processes]
+  app = '/app/bin/server'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 50051
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [[services.ports]]
+    port = 8443
+    handlers = ['tls']
+
+    [services.ports.tls_options]
+      alpn = ['h2']
+
+[[vm]]
+  size = 'shared-cpu-1x'

@@ -1,0 +1,65 @@
+// Prisma schema for Postgres to mirror current Go queries
+// Datasource uses DATABASE_URL loaded from .env or system env
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// We don't use Prisma client; we only leverage migrate diff to emit SQL.
+// A client generator can be omitted.
+
+model user_account {
+  id                     BigInt   @id @default(autoincrement()) @db.BigInt
+  user_external_id       String   @unique
+  stripe_subscription_id String?  @db.VarChar(255)
+  stripe_plan_id         String?  @db.VarChar(255)
+  stripe_customer_id     String?  @db.VarChar(255)
+  created_at             BigInt   @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+  updated_at             BigInt   @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+
+  // relations
+  free_credit          free_credit[]
+  spending_unit        spending_unit[]
+  invalid_subscription invalid_subscription[]
+}
+
+model invalid_subscription {
+  id                     BigInt   @id @default(autoincrement()) @db.BigInt
+  user_external_id       String
+  stripe_subscription_id String?  @db.VarChar(255)
+  stripe_plan_id         String?  @db.VarChar(255)
+  stripe_customer_id     String?  @db.VarChar(255)
+  created_at             BigInt   @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+  updated_at             BigInt   @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+
+  // required FK to user_account; cascade delete to keep consistency with other relations
+  user_account user_account @relation(fields: [user_external_id], references: [user_external_id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([user_external_id])
+}
+
+model free_credit {
+  id              BigInt @id @default(autoincrement()) @db.BigInt
+  user_external_id String  @unique
+  credit           Int
+  created_at       BigInt  @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+  updated_at       BigInt  @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+
+  // enforce FK to user_account
+  user_account user_account @relation(fields: [user_external_id], references: [user_external_id], onDelete: Cascade, onUpdate: Cascade)
+}
+
+model spending_unit {
+  id               BigInt  @id @default(autoincrement()) @db.BigInt
+  external_id      String  @unique
+  user_external_id String
+  amount           Int     @default(1)
+  created_at       BigInt  @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+  updated_at       BigInt  @default(dbgenerated("((extract(epoch from now()) * 1000))::bigint")) @db.BigInt
+
+  user_account user_account @relation(fields: [user_external_id], references: [user_external_id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([user_external_id])
+  @@index([created_at])
+}

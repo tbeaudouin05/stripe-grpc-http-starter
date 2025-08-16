@@ -1,0 +1,12 @@
+{
+  "name": "ai-mails-backend",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "prisma": "^5.16.0"
+  },
+  "scripts": {
+    "prisma:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > sqlc/schema/001_init.sql",
+    "prisma:validate": "prisma validate"
+  }
+}
