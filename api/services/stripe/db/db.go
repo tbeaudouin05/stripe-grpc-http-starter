@@ -32,6 +32,8 @@ type SpendingUnit struct {
 // created_at is expected to be in unix milliseconds.
 func AddSpendingUnits(items []SpendingUnit) (int, error) {
     ctx := context.Background()
+    // Ensure we only initialize free_credit once per user in this batch
+    ensured := make(map[string]bool)
     var total int
     for i, it := range items {
         if it.ExternalID == "" || it.UserExternalID == "" {
@@ -44,6 +46,14 @@ func AddSpendingUnits(items []SpendingUnit) (int, error) {
         if it.CreatedAt == 0 {
             return 0, fmt.Errorf("item %d: created_at is required", i)
         }
+        // lazily ensure a free_credit row exists for this user
+        if !ensured[it.UserExternalID] {
+            if _, err := GetFreeCredit(it.UserExternalID); err != nil {
+                return 0, fmt.Errorf("failed to ensure free credit for user %q: %w", it.UserExternalID, err)
+            }
+            ensured[it.UserExternalID] = true
+        }
+
         inserted, err := q.InsertSpendingUnit(ctx, sqldb.InsertSpendingUnitParams{
             ExternalID:     it.ExternalID,
             UserExternalID: it.UserExternalID,
@@ -53,24 +63,37 @@ func AddSpendingUnits(items []SpendingUnit) (int, error) {
         if err != nil {
             return 0, fmt.Errorf("failed to insert spending_unit (item %d): %w", i, err)
         }
+        // Normalize the inserted value and detect whether this row was actually inserted
+        insertedInt := 0
         switch v := inserted.(type) {
         case int:
-            total += v
+            insertedInt = v
         case int32:
-            total += int(v)
+            insertedInt = int(v)
         case int64:
-            total += int(v)
+            insertedInt = int(v)
         case float64:
-            total += int(v)
+            insertedInt = int(v)
         case []uint8:
             // some drivers may return numeric aggregates as []byte
             n, perr := strconv.ParseInt(string(v), 10, 64)
             if perr != nil {
                 return 0, fmt.Errorf("unexpected inserted type []uint8 parse error: %w", perr)
             }
-            total += int(n)
+            insertedInt = int(n)
         default:
             return 0, fmt.Errorf("unexpected inserted type %T", v)
+        }
+        total += insertedInt
+
+        // If we actually inserted the spending unit, consume free credit for this user by 'amount'
+        if insertedInt > 0 {
+            if err := q.ConsumeFreeCredit(ctx, sqldb.ConsumeFreeCreditParams{
+                UserExternalID: it.UserExternalID,
+                Credit:         int32(it.Amount),
+            }); err != nil {
+                return 0, fmt.Errorf("failed to consume free credit (item %d): %w", i, err)
+            }
         }
     }
     return total, nil

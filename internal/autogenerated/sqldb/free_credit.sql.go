@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const consumeFreeCredit = `-- name: ConsumeFreeCredit :exec
+UPDATE free_credit
+SET credit = credit - LEAST(credit, $2)
+WHERE user_external_id = $1
+`
+
+type ConsumeFreeCreditParams struct {
+	UserExternalID string `json:"user_external_id"`
+	Credit         int32  `json:"credit"`
+}
+
+func (q *Queries) ConsumeFreeCredit(ctx context.Context, arg ConsumeFreeCreditParams) error {
+	_, err := q.db.ExecContext(ctx, consumeFreeCredit, arg.UserExternalID, arg.Credit)
+	return err
+}
+
 const upsertAndGetFreeCredit = `-- name: UpsertAndGetFreeCredit :one
 INSERT INTO free_credit (
   user_external_id,

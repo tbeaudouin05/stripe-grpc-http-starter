@@ -145,6 +145,12 @@ curl -sS localhost:8080/api/spending-units \
   -d '{"items":[{"external_id":"evt-1","user_external_id":"user_123","amount":1,"created_at":1723500000000}]}'
 ```
 
+Notes:
+
+- When a spending unit is actually inserted (i.e., not a duplicate), the service consumes the user's free credit by the `amount` of that item.
+- Free credit is auto-initialized on first use to `InitialFreeCredit` if missing, and consumption is clamped at zero.
+- Paid subscriptions are unaffected by this behavior; spending units are still recorded and enforced against subscription limits.
+
 ## Database & SQLC
 
 Schema is emitted to `sqlc/schema/001_init.sql` from `prisma/schema.prisma`. Core tables:
@@ -160,6 +166,7 @@ Notable queries:
 
 - `GetUserAccount`, `UpsertUserAccount`
 - `UpsertAndGetFreeCredit`
+- `ConsumeFreeCredit`
 - `InsertInvalidSubscription`
 - `CountUnitsBetween`, `InsertSpendingUnit`
 

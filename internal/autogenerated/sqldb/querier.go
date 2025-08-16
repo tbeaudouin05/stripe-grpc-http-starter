@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	ConsumeFreeCredit(ctx context.Context, arg ConsumeFreeCreditParams) error
 	CountUnitsBetween(ctx context.Context, arg CountUnitsBetweenParams) (interface{}, error)
 	GetSubscriptionIDByUserExternalID(ctx context.Context, userExternalID string) (sql.NullString, error)
 	GetUserAccount(ctx context.Context, userExternalID string) (GetUserAccountRow, error)
