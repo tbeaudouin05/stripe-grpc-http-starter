@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-    "strconv"
+	"strconv"
+	"crypto/sha256"
+	"encoding/hex"
 
 	config "github.com/tbeaudouin05/stripe-trellai/api/config"
 	"github.com/tbeaudouin05/stripe-trellai/api/database"
@@ -27,6 +29,14 @@ type SpendingUnit struct {
     CreatedAt      int64
 }
 
+// hashExternalID returns a deterministic SHA-256 hex digest of the provided
+// external identifier. This allows the backend to avoid storing raw values
+// (e.g., emails) while preserving idempotency and uniqueness semantics.
+func hashExternalID(s string) string {
+    sum := sha256.Sum256([]byte(s))
+    return hex.EncodeToString(sum[:])
+}
+
 // AddSpendingUnits inserts items one by one with ON CONFLICT DO NOTHING semantics.
 // Returns the total number of rows actually inserted (duplicates are skipped).
 // created_at is expected to be in unix milliseconds.
@@ -46,7 +56,8 @@ func AddSpendingUnits(items []SpendingUnit) (int, error) {
         if it.CreatedAt == 0 {
             return 0, fmt.Errorf("item %d: created_at is required", i)
         }
-        // lazily ensure a free_credit row exists for this user
+        // lazily ensure a free_credit row exists for this user.
+        // Pass RAW user ID here because GetFreeCredit hashes internally.
         if !ensured[it.UserExternalID] {
             if _, err := GetFreeCredit(it.UserExternalID); err != nil {
                 return 0, fmt.Errorf("failed to ensure free credit for user %q: %w", it.UserExternalID, err)
@@ -54,9 +65,14 @@ func AddSpendingUnits(items []SpendingUnit) (int, error) {
             ensured[it.UserExternalID] = true
         }
 
+        // Always hash external_id before persisting to avoid storing raw identifiers.
+        hashedExternalID := hashExternalID(it.ExternalID)
+        // Hash user ID for direct SQL inserts below
+        hashedUserID := hashExternalID(it.UserExternalID)
+
         inserted, err := q.InsertSpendingUnit(ctx, sqldb.InsertSpendingUnitParams{
-            ExternalID:     it.ExternalID,
-            UserExternalID: it.UserExternalID,
+            ExternalID:     hashedExternalID,
+            UserExternalID: hashedUserID,
             Amount:         int32(it.Amount),
             CreatedAt:      it.CreatedAt,
         })
@@ -89,7 +105,7 @@ func AddSpendingUnits(items []SpendingUnit) (int, error) {
         // If we actually inserted the spending unit, consume free credit for this user by 'amount'
         if insertedInt > 0 {
             if err := q.ConsumeFreeCredit(ctx, sqldb.ConsumeFreeCreditParams{
-                UserExternalID: it.UserExternalID,
+                UserExternalID: hashedUserID,
                 Credit:         int32(it.Amount),
             }); err != nil {
                 return 0, fmt.Errorf("failed to consume free credit (item %d): %w", i, err)
@@ -109,13 +125,15 @@ func toNullString(s string) sql.NullString {
 
 // CheckUserAccount returns whether a user account exists and its stripe subscription ID if it exists
 func CheckUserAccount(userExternalID string) (bool, string, error) {
-	ctx := context.Background()
-	stripeSubscriptionID, err := q.GetSubscriptionIDByUserExternalID(ctx, userExternalID)
-	if err == sql.ErrNoRows {
-		return false, "", nil
-	}
-	if err != nil {
-		return false, "", fmt.Errorf("failed to check user_account: %w", err)
+    ctx := context.Background()
+    // hash the user ID before querying
+    hashed := hashExternalID(userExternalID)
+    stripeSubscriptionID, err := q.GetSubscriptionIDByUserExternalID(ctx, hashed)
+    if err == sql.ErrNoRows {
+        return false, "", nil
+    }
+    if err != nil {
+        return false, "", fmt.Errorf("failed to check user_account: %w", err)
 	}
 	if stripeSubscriptionID.Valid {
 		return true, stripeSubscriptionID.String, nil
@@ -125,32 +143,36 @@ func CheckUserAccount(userExternalID string) (bool, string, error) {
 
 // InsertInvalidSubscription inserts a record into invalid_subscription table
 func InsertInvalidSubscription(userExternalID, stripeSubscriptionID, stripePlanID, stripeCustomerID string) error {
-	ctx := context.Background()
-	err := q.InsertInvalidSubscription(ctx, sqldb.InsertInvalidSubscriptionParams{
-		UserExternalID:       userExternalID,
-		StripeSubscriptionID: toNullString(stripeSubscriptionID),
-		StripePlanID:         toNullString(stripePlanID),
-		StripeCustomerID:     toNullString(stripeCustomerID),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to insert invalid_subscription: %w", err)
-	}
-	return nil
+    ctx := context.Background()
+    // hash the user ID before inserting
+    hashed := hashExternalID(userExternalID)
+    err := q.InsertInvalidSubscription(ctx, sqldb.InsertInvalidSubscriptionParams{
+        UserExternalID:       hashed,
+        StripeSubscriptionID: toNullString(stripeSubscriptionID),
+        StripePlanID:         toNullString(stripePlanID),
+        StripeCustomerID:     toNullString(stripeCustomerID),
+    })
+    if err != nil {
+        return fmt.Errorf("failed to insert invalid_subscription: %w", err)
+    }
+    return nil
 }
 
 // UpsertUserAccount upserts a record into user_account table
 func UpsertUserAccount(userExternalID, stripeSubscriptionID, stripePlanID, stripeCustomerID string) error {
-	ctx := context.Background()
-	err := q.UpsertUserAccount(ctx, sqldb.UpsertUserAccountParams{
-		UserExternalID:       userExternalID,
-		StripeSubscriptionID: toNullString(stripeSubscriptionID),
-		StripePlanID:         toNullString(stripePlanID),
-		StripeCustomerID:     toNullString(stripeCustomerID),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to upsert user_account: %w", err)
-	}
-	return nil
+    ctx := context.Background()
+    // hash the user ID before upserting
+    hashed := hashExternalID(userExternalID)
+    err := q.UpsertUserAccount(ctx, sqldb.UpsertUserAccountParams{
+        UserExternalID:       hashed,
+        StripeSubscriptionID: toNullString(stripeSubscriptionID),
+        StripePlanID:         toNullString(stripePlanID),
+        StripeCustomerID:     toNullString(stripeCustomerID),
+    })
+    if err != nil {
+        return fmt.Errorf("failed to upsert user_account: %w", err)
+    }
+    return nil
 }
 
 const AccountWithoutSubscriptionID = "accountWithoutSubscription"
@@ -168,13 +190,15 @@ type UserAccount struct {
 
 // GetUserAccount retrieves a user_account record by external ID
 func GetUserAccount(userExternalID string) (UserAccount, error) {
-	ctx := context.Background()
-	row, err := q.GetUserAccount(ctx, userExternalID)
-	if err == sql.ErrNoRows {
-		return UserAccount{UserExternalID: AccountWithoutSubscriptionID}, nil
-	}
-	if err != nil {
-		return UserAccount{}, fmt.Errorf("error scanning user_account row: %w", err)
+    ctx := context.Background()
+    // hash the user ID before querying
+    hashed := hashExternalID(userExternalID)
+    row, err := q.GetUserAccount(ctx, hashed)
+    if err == sql.ErrNoRows {
+        return UserAccount{UserExternalID: AccountWithoutSubscriptionID}, nil
+    }
+    if err != nil {
+        return UserAccount{}, fmt.Errorf("error scanning user_account row: %w", err)
 	}
 
 	ua := UserAccount{
@@ -200,27 +224,31 @@ func GetUserAccount(userExternalID string) (UserAccount, error) {
 // GetFreeCredit retrieves free_credit amount for a user.
 // If no record exists, it creates one with the default InitialFreeCredit value.
 func GetFreeCredit(userExternalID string) (int, error) {
-	ctx := context.Background()
-	credit, err := q.UpsertAndGetFreeCredit(ctx, sqldb.UpsertAndGetFreeCreditParams{
-		UserExternalID: userExternalID,
-		Credit:         int32(config.InitialFreeCredit),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("error getting/creating free_credit: %w", err)
-	}
-	return int(credit), nil
+    ctx := context.Background()
+    // hash the user ID before querying/upserting
+    hashed := hashExternalID(userExternalID)
+    credit, err := q.UpsertAndGetFreeCredit(ctx, sqldb.UpsertAndGetFreeCreditParams{
+        UserExternalID: hashed,
+        Credit:         int32(config.InitialFreeCredit),
+    })
+    if err != nil {
+        return 0, fmt.Errorf("error getting/creating free_credit: %w", err)
+    }
+    return int(credit), nil
 }
 
 // CountUnitsBetween sums spending units for a given user between start and end (inclusive).
 func CountUnitsBetween(userExternalID string, start, end int64) (int, error) {
-	ctx := context.Background()
-	c, err := q.CountUnitsBetween(ctx, sqldb.CountUnitsBetweenParams{
-		UserExternalID: userExternalID,
-		CreatedAt:      start,
-		CreatedAt_2:    end,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("error summing spending units: %w", err)
+    ctx := context.Background()
+    // hash the user ID before querying
+    hashed := hashExternalID(userExternalID)
+    c, err := q.CountUnitsBetween(ctx, sqldb.CountUnitsBetweenParams{
+        UserExternalID: hashed,
+        CreatedAt:      start,
+        CreatedAt_2:    end,
+    })
+    if err != nil {
+        return 0, fmt.Errorf("error summing spending units: %w", err)
 	}
 	switch v := c.(type) {
 	case int64:

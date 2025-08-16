@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 	"time"
@@ -12,6 +14,11 @@ import (
 	database "github.com/tbeaudouin05/stripe-trellai/api/database"
 	stripedb "github.com/tbeaudouin05/stripe-trellai/api/services/stripe/db"
 )
+
+func hashIDCheckout(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 const (
 	checkoutBoardID     = "checkout-test-board"
@@ -51,16 +58,18 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
 	db := database.GetDB()
-	// Pre-test cleanup to avoid cross-test contamination
-	_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
-	_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
-	_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
-	_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
+	// Pre-test cleanup to avoid cross-test contamination (hashed IDs)
+	hb := hashIDCheckout(checkoutBoardID)
+	hnb := hashIDCheckout(checkoutNoneBoardID)
+	_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", hb, hnb)
+	_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", hb, hnb)
+	_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", hb, hnb)
+	_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", hb, hnb)
 	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
-		_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
-		_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
-		_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", checkoutBoardID, checkoutNoneBoardID)
+		_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", hb, hnb)
+		_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", hb, hnb)
+		_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", hb, hnb)
+		_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", hb, hnb)
 	}
 	return db, cleanup
 }
@@ -124,7 +133,7 @@ func Test_HandleCheckoutSessionCompleted_ExistingBoard_CanceledPrevSub(t *testin
 	assert.Equal(t, "cust-new", account.StripeCustomerID)
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(1) FROM invalid_subscription WHERE user_external_id = $1", checkoutBoardID).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(1) FROM invalid_subscription WHERE user_external_id = $1", hashIDCheckout(checkoutBoardID)).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 
@@ -158,7 +167,7 @@ func Test_HandleCheckoutSessionCompleted_ExistingBoard_NonCanceledPrevSub(t *tes
 	assert.Equal(t, "old-sub", account.StripeSubscriptionID)
 
 	var invalidID string
-	err = db.QueryRow("SELECT stripe_subscription_id FROM invalid_subscription WHERE user_external_id = $1", checkoutBoardID).Scan(&invalidID)
+	err = db.QueryRow("SELECT stripe_subscription_id FROM invalid_subscription WHERE user_external_id = $1", hashIDCheckout(checkoutBoardID)).Scan(&invalidID)
 	assert.NoError(t, err)
 	assert.Equal(t, "sub-new", invalidID)
 

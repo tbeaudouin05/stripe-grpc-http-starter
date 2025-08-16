@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,6 +15,11 @@ import (
 	database "github.com/tbeaudouin05/stripe-trellai/api/database"
 	stripedb "github.com/tbeaudouin05/stripe-trellai/api/services/stripe/db"
 )
+
+func hashID(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 const (
 	subBoardID       = "sub-test-board"
@@ -33,16 +40,18 @@ func setupSubTestDB(t *testing.T) (*sql.DB, func()) {
 		}
 	}
 	db := database.GetDB()
-	// Pre-test cleanup for this file's IDs
-	_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
-	_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
-	_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
-	_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
+	// Pre-test cleanup for this file's IDs (hashed)
+	hb := hashID(subBoardID)
+	hnb := hashID(subNoneBoardID)
+	_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", hb, hnb)
+	_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", hb, hnb)
+	_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", hb, hnb)
+	_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", hb, hnb)
 	cleanup := func() {
-		_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
-		_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
-		_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
-		_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", subBoardID, subNoneBoardID)
+		_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", hb, hnb)
+		_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", hb, hnb)
+		_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", hb, hnb)
+		_, _ = db.Exec("DELETE FROM user_account WHERE user_external_id IN ($1, $2)", hb, hnb)
 	}
 	return db, cleanup
 }
@@ -61,10 +70,10 @@ func Test_VerifySubscription_ValidWithFreeCredit(t *testing.T) {
 			t.Fatalf("UserAccount fields not set as expected: got sub=%q cust=%q", account.StripeSubscriptionID, account.StripeCustomerID)
 		}
 	}
-	if _, err := db.Exec("DELETE FROM free_credit WHERE user_external_id = $1", subBoardID); err != nil {
+	if _, err := db.Exec("DELETE FROM free_credit WHERE user_external_id = $1", hashID(subBoardID)); err != nil {
 		t.Fatalf("Failed to delete free_credit: %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, $2)", subBoardID, 5); err != nil {
+	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, $2)", hashID(subBoardID), 5); err != nil {
 		t.Fatalf("Failed to insert free_credit: %v", err)
 	}
 
@@ -79,17 +88,17 @@ func Test_VerifySubscription_DoesNotExistAndFreeCreditIsNotEnough(t *testing.T) 
 	db, cleanup := setupSubTestDB(t)
 	defer cleanup()
 
-	if _, err := db.Exec("DELETE FROM spending_unit WHERE user_external_id = $1", subNoneBoardID); err != nil {
+	if _, err := db.Exec("DELETE FROM spending_unit WHERE user_external_id = $1", hashID(subNoneBoardID)); err != nil {
 		t.Fatalf("Failed to delete spending_unit: %v", err)
 	}
-	if _, err := db.Exec("DELETE FROM user_account WHERE user_external_id = $1", subNoneBoardID); err != nil {
+	if _, err := db.Exec("DELETE FROM user_account WHERE user_external_id = $1", hashID(subNoneBoardID)); err != nil {
 		t.Fatalf("Failed to delete user_account: %v", err)
 	}
 	// With strict FK on free_credit.user_external_id, ensure the account exists first.
 	if err := stripedb.UpsertUserAccount(subNoneBoardID, "", "", ""); err != nil {
 		t.Fatalf("UpsertUserAccount (for subNoneBoardID) failed: %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", subNoneBoardID); err != nil {
+	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", hashID(subNoneBoardID)); err != nil {
 		t.Fatalf("Failed to upsert free_credit: %v", err)
 	}
 
@@ -107,7 +116,7 @@ func Test_VerifySubscription_ValidWithoutFreeCredit(t *testing.T) {
 	if err := stripedb.UpsertUserAccount(subBoardID, "sub_123", "plan_123", "cust_123"); err != nil {
 		t.Fatalf("UpsertUserAccount failed: %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", subBoardID); err != nil {
+	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", hashID(subBoardID)); err != nil {
 		t.Fatalf("Failed to upsert free_credit: %v", err)
 	}
 
@@ -133,10 +142,10 @@ func Test_VerifySubscription_Exhausted(t *testing.T) {
 	if err := stripedb.UpsertUserAccount(subBoardID, "sub_123", "plan_123", "cust_123"); err != nil {
 		t.Fatalf("UpsertUserAccount failed: %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", subBoardID); err != nil {
+	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", hashID(subBoardID)); err != nil {
 		t.Fatalf("Failed to upsert free_credit: %v", err)
 	}
-	if _, err := db.Exec("DELETE FROM spending_unit WHERE user_external_id = $1", subBoardID); err != nil {
+	if _, err := db.Exec("DELETE FROM spending_unit WHERE user_external_id = $1", hashID(subBoardID)); err != nil {
 		t.Fatalf("Failed to delete spending_unit: %v", err)
 	}
 
@@ -149,7 +158,7 @@ func Test_VerifySubscription_Exhausted(t *testing.T) {
 	for i := 0; i < 45; i++ {
 		values[i] = fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3)
 		// keep args order matching column order below (user_external_id, external_id, created_at)
-		args = append(args, subBoardID, fmt.Sprintf("sub-card-%d", i), currentStartMs+int64(i))
+		args = append(args, hashID(subBoardID), fmt.Sprintf("sub-card-%d", i), currentStartMs+int64(i))
 	}
 	query := "INSERT INTO spending_unit (user_external_id, external_id, created_at) VALUES " + strings.Join(values, ",")
 	if _, err := db.Exec(query, args...); err != nil {
@@ -178,10 +187,10 @@ func Test_VerifySubscription_Cancelled(t *testing.T) {
 	if err := stripedb.UpsertUserAccount(subBoardID, "sub_123", "plan_123", "cust_123"); err != nil {
 		t.Fatalf("UpsertUserAccount failed: %v", err)
 	}
-	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", subBoardID); err != nil {
+	if _, err := db.Exec("INSERT INTO free_credit (user_external_id, credit) VALUES ($1, 0) ON CONFLICT (user_external_id) DO UPDATE SET credit = 0", hashID(subBoardID)); err != nil {
 		t.Fatalf("Failed to upsert free_credit: %v", err)
 	}
-	if _, err := db.Exec("DELETE FROM spending_unit WHERE user_external_id = $1", subBoardID); err != nil {
+	if _, err := db.Exec("DELETE FROM spending_unit WHERE user_external_id = $1", hashID(subBoardID)); err != nil {
 		t.Fatalf("Failed to delete spending_unit: %v", err)
 	}
 
