@@ -142,12 +142,14 @@ func Test_VerifySubscription_Exhausted(t *testing.T) {
 
 	currentStart := time.Now().Unix()
 	currentEnd := time.Now().Unix() + 86400
+	// created_at is stored in ms; convert start to ms for inserted rows
+	currentStartMs := currentStart * 1000
 	values := make([]string, 45)
 	args := make([]interface{}, 0, 45*3)
 	for i := 0; i < 45; i++ {
 		values[i] = fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3)
 		// keep args order matching column order below (user_external_id, external_id, created_at)
-		args = append(args, subBoardID, fmt.Sprintf("sub-card-%d", i), currentStart+int64(i))
+		args = append(args, subBoardID, fmt.Sprintf("sub-card-%d", i), currentStartMs+int64(i))
 	}
 	query := "INSERT INTO spending_unit (user_external_id, external_id, created_at) VALUES " + strings.Join(values, ",")
 	if _, err := db.Exec(query, args...); err != nil {

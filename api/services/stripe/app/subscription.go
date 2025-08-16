@@ -54,7 +54,12 @@ func (s serviceImpl) VerifySubscription(userExternalID string) (VerifySubscripti
     }
 
     // if subscription is exhausted (not enough units remaining), then it is not valid
-    count, err := stripedb.CountUnitsBetween(userExternalID, subRetrieved.CurrentPeriodStart, subRetrieved.CurrentPeriodEnd)
+    // Stripe provides seconds; our DB stores milliseconds, so convert bounds to ms.
+    count, err := stripedb.CountUnitsBetween(
+        userExternalID,
+        subRetrieved.CurrentPeriodStart*1000,
+        subRetrieved.CurrentPeriodEnd*1000,
+    )
     if err != nil {
         return VerifySubscriptionResponse{}, fmt.Errorf("%w: error counting units: %v", ErrDatabase, err)
     }
