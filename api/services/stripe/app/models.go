@@ -16,9 +16,6 @@ const (
     ValidityTypePayingCustomer ValidityType = "payingCustomer"
 )
 
-// Business constants
-const PricePerTicket = 35
-
 // VerifySubscriptionResponse is the domain response returned by the app layer
 // HTTP layer will translate this into JSON
 // Keep value types to avoid pointer proliferation in domain.

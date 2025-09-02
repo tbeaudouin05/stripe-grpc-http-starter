@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -17,6 +18,8 @@ type Config struct {
 	DatabaseURL         string
 	StripeSecretKey     string
 	StripeWebhookSecret string
+	CreditUnitsPerDollar string
+	InitialFreeCredit   int
 	// Optional: base URL for running remote HTTP integration tests (e.g., https://api.example.com)
 	IntegrationBaseURL  string
 	// Server ports
@@ -55,6 +58,7 @@ func LoadConfig() (*Config, error) {
 		{"DatabaseURL", "DATABASE_URL", "Database URL", true},
 		{"StripeSecretKey", "STRIPE_SECRET_KEY", "Stripe Secret Key", true},
 		{"StripeWebhookSecret", "STRIPE_WEBHOOK_SECRET", "Stripe Webhook Secret", true},
+		{"CreditUnitsPerDollar", "CREDIT_UNITS_PER_DOLLAR", "Credit Units Per Dollar", true},
 		// Optional integration base URL for remote tests
 		{"IntegrationBaseURL", "INTEGRATION_BASE_URL", "Integration Base URL", false},
 		// Optional server ports
@@ -69,6 +73,17 @@ func LoadConfig() (*Config, error) {
 		}
 		configField := reflect.ValueOf(config).Elem().FieldByName(v.name)
 		configField.SetString(value)
+	}
+
+	// Parse required integer env var: INITIAL_FREE_CREDIT
+	if v := os.Getenv("INITIAL_FREE_CREDIT"); v == "" {
+		return nil, fmt.Errorf("missing required environment variable: Initial Free Credit")
+	} else {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid INITIAL_FREE_CREDIT, must be an integer: %v", err)
+		}
+		config.InitialFreeCredit = n
 	}
 
 	// Defaults

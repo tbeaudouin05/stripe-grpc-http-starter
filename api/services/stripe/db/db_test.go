@@ -13,7 +13,15 @@ import (
 )
 
 func hash(s string) string {
-    sum := sha256.Sum256([]byte(s))
+    // Sanitize to ASCII alphanumerics to mirror production hashing
+    b := make([]byte, 0, len(s))
+    for i := 0; i < len(s); i++ {
+        c := s[i]
+        if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+            b = append(b, c)
+        }
+    }
+    sum := sha256.Sum256(b)
     return hex.EncodeToString(sum[:])
 }
 
@@ -122,8 +130,8 @@ func TestFreeCreditLifecycle(t *testing.T) {
     if err != nil {
         t.Fatalf("GetFreeCredit failed: %v", err)
     }
-    if credit != config.InitialFreeCredit {
-        t.Errorf("Expected credit %d, got %d", config.InitialFreeCredit, credit)
+    if credit != config.AppConfig.InitialFreeCredit {
+        t.Errorf("Expected credit %d, got %d", config.AppConfig.InitialFreeCredit, credit)
     }
 
     // Test updating credit directly in DB

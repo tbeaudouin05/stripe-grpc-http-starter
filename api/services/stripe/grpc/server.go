@@ -46,6 +46,27 @@ func HeaderMatcher(key string) (string, bool) {
     return runtime.DefaultHeaderMatcher(key)
 }
 
+// HandleWebhookPayload verifies the Stripe signature and dispatches the event.
+func HandleWebhookPayload(app appsvc.Service, payload []byte, signature string) error {
+    if signature == "" {
+        return fmt.Errorf("missing Stripe-Signature header")
+    }
+    endpointSecret := config.AppConfig.StripeWebhookSecret
+    event, err := ConstructEvent(payload, signature, endpointSecret)
+    if err != nil {
+        return fmt.Errorf("error verifying webhook signature: %v", err)
+    }
+    switch event.Type {
+    case "checkout.session.completed":
+        if err := app.HandleCheckoutSessionCompleted(event); err != nil {
+            return err
+        }
+    default:
+        slog.Info("Unhandled event type", "type", event.Type)
+    }
+    return nil
+}
+
 // CancelSubscription implements RPC.
 func (s Server) CancelSubscription(ctx context.Context, req *stripev1.CancelSubscriptionRequest) (*stripev1.CancelSubscriptionResponse, error) {
     if err := bootstrap.Ensure(); err != nil {
@@ -83,6 +104,8 @@ func (s Server) VerifySubscriptionValidity(ctx context.Context, req *stripev1.Ve
 // HandleWebhook implements RPC handling of Stripe webhooks.
 // Requires the "Stripe-Signature" header to be forwarded via grpc-gateway.
 func (s Server) HandleWebhook(ctx context.Context, body *httpbody.HttpBody) (*emptypb.Empty, error) {
+    // Early log to confirm endpoint entry on Fly.io and other environments
+    slog.Info("HandleWebhook: start", "content_type", body.GetContentType(), "data_len", len(body.GetData()))
     if err := bootstrap.Ensure(); err != nil {
         return nil, fmt.Errorf("initialization error: %v", err)
     }
@@ -92,21 +115,8 @@ func (s Server) HandleWebhook(ctx context.Context, body *httpbody.HttpBody) (*em
     if len(sigVals) > 0 {
         signature = sigVals[0]
     }
-    if signature == "" {
-        return nil, fmt.Errorf("missing Stripe-Signature header")
-    }
-    endpointSecret := config.AppConfig.StripeWebhookSecret
-    event, err := ConstructEvent(body.GetData(), signature, endpointSecret)
-    if err != nil {
-        return nil, fmt.Errorf("error verifying webhook signature: %v", err)
-    }
-    switch event.Type {
-    case "checkout.session.completed":
-        if err := s.app.HandleCheckoutSessionCompleted(event); err != nil {
-            return nil, err
-        }
-    default:
-        slog.Info("Unhandled event type", "type", event.Type)
+    if err := HandleWebhookPayload(s.app, body.GetData(), signature); err != nil {
+        return nil, err
     }
     return &emptypb.Empty{}, nil
 }

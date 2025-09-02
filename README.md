@@ -49,6 +49,7 @@ Required variables:
 - `DATABASE_URL`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
+- `CREDIT_UNITS_PER_DOLLAR`
 
 Optional variables:
 
@@ -62,8 +63,29 @@ Example `.env`:
 DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
+CREDIT_UNITS_PER_DOLLAR=2_000_000
 PORT=8080
 GRPC_PORT=50051
+```
+
+### CREDIT_UNITS_PER_DOLLAR
+
+`CREDIT_UNITS_PER_DOLLAR` defines how many internal credit units a customer receives per 1 USD of subscription amount. It is used when validating a Stripe subscription in `api/services/stripe/app/subscription.go` to determine whether the subscription has remaining units for the current billing period.
+
+Details:
+
+- Stripe plan amounts are provided in cents; the code converts to dollars before multiplying by `CREDIT_UNITS_PER_DOLLAR`.
+- The variable supports underscores for readability (e.g., `2_000_000`).
+- This value is required in all environments. It is read via `api/config/config.go` and exposed through `config.AppConfig.CreditUnitsPerDollar`.
+
+Example:
+
+- With `CREDIT_UNITS_PER_DOLLAR=2_000_000` and a plan amount of `$14.00` and quantity `1`, a subscription grants `14 * 2_000_000 = 28_000_000` units per billing period.
+
+To set on Fly.io:
+
+```bash
+fly secrets set CREDIT_UNITS_PER_DOLLAR=2_000_000
 ```
 
 ## Code Generation

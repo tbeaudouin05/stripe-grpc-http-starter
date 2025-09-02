@@ -8,9 +8,6 @@ import (
 const (
 	// ProdDbId is the identifier for the production database
 	ProdDbId = "old-cloud"
-
-	// InitialFreeCredit is the default number of free credits for new users
-	InitialFreeCredit = 5
 )
 
 // CheckNotProdDB aborts immediately if the configured database URL contains ProdDbId.

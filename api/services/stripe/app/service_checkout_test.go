@@ -1,9 +1,7 @@
 package app
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"testing"
 	"time"
@@ -15,10 +13,7 @@ import (
 	stripedb "github.com/tbeaudouin05/stripe-trellai/api/services/stripe/db"
 )
 
-func hashIDCheckout(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
+// Deprecated local hash helper removed; use stripedb.HashExternalID instead
 
 const (
 	checkoutBoardID     = "checkout-test-board"
@@ -59,8 +54,8 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 	}
 	db := database.GetDB()
 	// Pre-test cleanup to avoid cross-test contamination (hashed IDs)
-	hb := hashIDCheckout(checkoutBoardID)
-	hnb := hashIDCheckout(checkoutNoneBoardID)
+	hb := stripedb.HashExternalID(checkoutBoardID)
+	hnb := stripedb.HashExternalID(checkoutNoneBoardID)
 	_, _ = db.Exec("DELETE FROM spending_unit WHERE user_external_id IN ($1, $2)", hb, hnb)
 	_, _ = db.Exec("DELETE FROM free_credit WHERE user_external_id IN ($1, $2)", hb, hnb)
 	_, _ = db.Exec("DELETE FROM invalid_subscription WHERE user_external_id IN ($1, $2)", hb, hnb)
@@ -103,7 +98,7 @@ func Test_HandleCheckoutSessionCompleted_NoExistingBoard(t *testing.T) {
 
 	credit, err := stripedb.GetFreeCredit(checkoutBoardID)
 	assert.NoError(t, err)
-	assert.Equal(t, 5, credit)
+	assert.Equal(t, config.AppConfig.InitialFreeCredit, credit)
 }
 
 func Test_HandleCheckoutSessionCompleted_ExistingBoard_CanceledPrevSub(t *testing.T) {
@@ -133,13 +128,13 @@ func Test_HandleCheckoutSessionCompleted_ExistingBoard_CanceledPrevSub(t *testin
 	assert.Equal(t, "cust-new", account.StripeCustomerID)
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(1) FROM invalid_subscription WHERE user_external_id = $1", hashIDCheckout(checkoutBoardID)).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(1) FROM invalid_subscription WHERE user_external_id = $1", stripedb.HashExternalID(checkoutBoardID)).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 
 	credit, err := stripedb.GetFreeCredit(checkoutBoardID)
 	assert.NoError(t, err)
-	assert.Equal(t, 5, credit)
+	assert.Equal(t, config.AppConfig.InitialFreeCredit, credit)
 }
 
 func Test_HandleCheckoutSessionCompleted_ExistingBoard_NonCanceledPrevSub(t *testing.T) {
@@ -167,11 +162,11 @@ func Test_HandleCheckoutSessionCompleted_ExistingBoard_NonCanceledPrevSub(t *tes
 	assert.Equal(t, "old-sub", account.StripeSubscriptionID)
 
 	var invalidID string
-	err = db.QueryRow("SELECT stripe_subscription_id FROM invalid_subscription WHERE user_external_id = $1", hashIDCheckout(checkoutBoardID)).Scan(&invalidID)
+	err = db.QueryRow("SELECT stripe_subscription_id FROM invalid_subscription WHERE user_external_id = $1", stripedb.HashExternalID(checkoutBoardID)).Scan(&invalidID)
 	assert.NoError(t, err)
 	assert.Equal(t, "sub-new", invalidID)
 
 	credit, err := stripedb.GetFreeCredit(checkoutBoardID)
 	assert.NoError(t, err)
-	assert.Equal(t, 5, credit)
+	assert.Equal(t, config.AppConfig.InitialFreeCredit, credit)
 }
